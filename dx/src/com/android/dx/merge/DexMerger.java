@@ -17,6 +17,7 @@
 package com.android.dx.merge;
 
 import com.android.dex.Annotation;
+import com.android.dex.CallSiteId;
 import com.android.dex.ClassData;
 import com.android.dex.ClassDef;
 import com.android.dex.Code;
@@ -24,13 +25,13 @@ import com.android.dex.Dex;
 import com.android.dex.DexException;
 import com.android.dex.DexIndexOverflowException;
 import com.android.dex.FieldId;
+import com.android.dex.MethodHandle;
 import com.android.dex.MethodId;
 import com.android.dex.ProtoId;
 import com.android.dex.SizeOf;
 import com.android.dex.TableOfContents;
 import com.android.dex.TypeList;
 import com.android.dx.command.dexer.DxContext;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
@@ -162,8 +163,10 @@ public final class DexMerger {
         mergeProtoIds();
         mergeFieldIds();
         mergeMethodIds();
+        mergeMethodHandles();
         mergeAnnotations();
         unionAnnotationSetsAndDirectories();
+        mergeCallSiteIds();
         mergeClassDefs();
 
         // computeSizesFromOffsets expects sections sorted by offset, so make it so
@@ -291,7 +294,7 @@ public final class DexMerger {
                     l = new ArrayList<Integer>();
                     values.put(v, l);
                 }
-                l.add(new Integer(dex));
+                l.add(dex);
             }
             return offset;
         }
@@ -468,10 +471,59 @@ public final class DexMerger {
                 indexMap.protoIds[oldIndex] = (short) newIndex;
             }
 
-            @Override void write(ProtoId value) {
+            @Override
+            void write(ProtoId value) {
                 value.writeTo(idsDefsOut);
             }
         }.mergeSorted();
+    }
+
+    private void mergeCallSiteIds() {
+        new IdMerger<CallSiteId>(idsDefsOut) {
+            @Override
+            TableOfContents.Section getSection(TableOfContents tableOfContents) {
+                return tableOfContents.callSiteIds;
+            }
+
+            @Override
+            CallSiteId read(Dex.Section in, IndexMap indexMap, int index) {
+                return indexMap.adjust(in.readCallSiteId());
+            }
+
+            @Override
+            void updateIndex(int offset, IndexMap indexMap, int oldIndex, int newIndex) {
+                indexMap.callSiteIds[oldIndex] = newIndex;
+            }
+
+            @Override
+            void write(CallSiteId value) {
+                value.writeTo(idsDefsOut);
+            }
+        }.mergeSorted();
+    }
+
+    private void mergeMethodHandles() {
+        new IdMerger<MethodHandle>(idsDefsOut) {
+            @Override
+            TableOfContents.Section getSection(TableOfContents tableOfContents) {
+                return tableOfContents.methodHandles;
+            }
+
+            @Override
+            MethodHandle read(Dex.Section in, IndexMap indexMap, int index) {
+                return indexMap.adjust(in.readMethodHandle());
+            }
+
+            @Override
+            void updateIndex(int offset, IndexMap indexMap, int oldIndex, int newIndex) {
+                indexMap.methodHandleIds.put(oldIndex, indexMap.methodHandleIds.size());
+            }
+
+            @Override
+            void write(MethodHandle value) {
+                value.writeTo(idsDefsOut);
+            }
+        }.mergeUnsorted();
     }
 
     private void mergeFieldIds() {
@@ -698,7 +750,7 @@ public final class DexMerger {
         }
 
         int staticValuesOff = classDef.getStaticValuesOffset();
-        idsDefsOut.writeInt(indexMap.adjustStaticValues(staticValuesOff));
+        idsDefsOut.writeInt(indexMap.adjustEncodedArray(staticValuesOff));
     }
 
     /**
@@ -1000,7 +1052,7 @@ public final class DexMerger {
 
     private void transformStaticValues(Dex.Section in, IndexMap indexMap) {
         contentsOut.encodedArrays.size++;
-        indexMap.putStaticValuesOffset(in.getPosition(), encodedArrayOut.getPosition());
+        indexMap.putEncodedArrayValueOffset(in.getPosition(), encodedArrayOut.getPosition());
         indexMap.adjustEncodedArray(in.readEncodedArray()).writeTo(encodedArrayOut);
     }
 
@@ -1092,8 +1144,10 @@ public final class DexMerger {
                 encodedArray += contents.encodedArrays.byteCount * 2;
                 // all of the bytes in an annotations section may be uleb/sleb
                 annotation += (int) Math.ceil(contents.annotations.byteCount * 2);
-                // all of the bytes in a debug info section may be uleb/sleb
-                debugInfo += contents.debugInfos.byteCount * 2;
+                // all of the bytes in a debug info section may be uleb/sleb. The additive constant
+                // is a fudge factor observed to be required when merging small
+                // DEX files (b/68483205).
+                debugInfo += contents.debugInfos.byteCount * 2 + 8;
             }
         }
 

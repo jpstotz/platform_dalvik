@@ -16,17 +16,30 @@
 package com.android.dx.rop.cst;
 
 import com.android.dx.rop.type.Prototype;
+import com.android.dx.rop.type.Type;
 
 /**
  * Prototype reference.
  */
-public class CstProtoRef extends Constant {
+public final class CstProtoRef extends TypedConstant {
 
     /** {@code non-null;} the prototype */
     private final Prototype prototype;
 
     public CstProtoRef(Prototype prototype) {
         this.prototype = prototype;
+    }
+
+    /**
+     * Makes an instance for the given value. This may (but does not
+     * necessarily) return an already-allocated instance.
+     *
+     * @param descriptor the method descriptor
+     * @return {@code non-null;} the appropriate instance
+     */
+    public static CstProtoRef make(CstString descriptor) {
+        Prototype prototype = Prototype.fromDescriptor(descriptor.getString());
+        return new CstProtoRef(prototype);
     }
 
     /** {@inheritDoc} */
@@ -77,5 +90,10 @@ public class CstProtoRef extends Constant {
 
     public Prototype getPrototype() {
         return prototype;
+    }
+
+    @Override
+    public Type getType() {
+        return Type.METHOD_TYPE;
     }
 }

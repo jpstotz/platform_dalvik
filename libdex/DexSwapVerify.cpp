@@ -25,7 +25,6 @@
 #include "DexUtf.h"
 #include "Leb128.h"
 
-#include <safe_iop.h>
 #include <zlib.h>
 
 #include <stdlib.h>
@@ -140,7 +139,8 @@ static inline bool checkPtrRange(const CheckState* state,
 #define CHECK_LIST_SIZE(_ptr, _count, _elemSize) {                          \
         const u1* _start = (const u1*) (_ptr);                              \
         const u1* _end = _start + ((_count) * (_elemSize));                 \
-        if (!safe_mul(NULL, (_count), (_elemSize)) ||                       \
+        u4 _dummy;                                                          \
+        if (__builtin_mul_overflow((_count), (_elemSize), &_dummy) ||       \
             !checkPtrRange(state, _start, _end, #_ptr)) {                   \
             return 0;                                                       \
         }                                                                   \
@@ -617,7 +617,7 @@ static bool shortyDescMatch(char shorty, const char* descriptor, bool
                 ALOGE("Invalid use of void");
                 return false;
             }
-            // Fall through.
+            FALLTHROUGH_INTENDED;
         }
         case 'B':
         case 'C':
@@ -1068,22 +1068,30 @@ static void* crossVerifyMethodHandleItem(const CheckState* state, void* ptr) {
         ALOGE("Verifying method handle but expecting none");
         return NULL;
     }
-    if (item->methodHandleType <= 3 &&
-        item->fieldOrMethodIdx >= state->pHeader->fieldIdsSize) {
-        // 0-3 are field accessors.
-        ALOGE("Method handle has invalid field id: %u\n", item->fieldOrMethodIdx);
-        return NULL;
-    }
-    if (item->methodHandleType >= 4 &&
-        item->methodHandleType <= 6 &&
-        item->fieldOrMethodIdx >= state->pHeader->methodIdsSize) {
-        // 4-6 are method invocations.
-        ALOGE("Method handle has invalid method id: %u\n", item->fieldOrMethodIdx);
-        return NULL;
-    }
-    if (item->methodHandleType >= 7) {
+    if (item->methodHandleType > (u2) MethodHandleType::INVOKE_INTERFACE) {
         ALOGE("Unknown method handle type: %u", item->methodHandleType);
         return NULL;
+    }
+    switch ((MethodHandleType) item->methodHandleType) {
+        case MethodHandleType::STATIC_PUT:
+        case MethodHandleType::STATIC_GET:
+        case MethodHandleType::INSTANCE_PUT:
+        case MethodHandleType::INSTANCE_GET:
+            if (item->fieldOrMethodIdx >= state->pHeader->fieldIdsSize) {
+                ALOGE("Method handle has invalid field id: %u\n", item->fieldOrMethodIdx);
+                return NULL;
+            }
+            break;
+        case MethodHandleType::INVOKE_STATIC:
+        case MethodHandleType::INVOKE_INSTANCE:
+        case MethodHandleType::INVOKE_CONSTRUCTOR:
+        case MethodHandleType::INVOKE_DIRECT:
+        case MethodHandleType::INVOKE_INTERFACE:
+            if (item->fieldOrMethodIdx >= state->pHeader->methodIdsSize) {
+                ALOGE("Method handle has invalid method id: %u\n", item->fieldOrMethodIdx);
+                return NULL;
+            }
+            break;
     }
     return (void*) (item + 1);
 }
@@ -2456,19 +2464,6 @@ static void* intraVerifyAnnotationItem(const CheckState* state, void* ptr) {
     return (void*) verifyEncodedAnnotation(state, data, false);
 }
 
-/* Perform cross-item verification on annotation_item. */
-static void* crossVerifyAnnotationItem(const CheckState* state, void* ptr) {
-    const u1* data = (const u1*) ptr;
-
-    // Skip the visibility byte.
-    data++;
-
-    return (void*) verifyEncodedAnnotation(state, data, true);
-}
-
-
-
-
 /*
  * Function to visit an individual top-level item type.
  */
@@ -2913,7 +2908,8 @@ bool dexHasValidMagic(const DexHeader* pHeader)
     if ((memcmp(version, DEX_MAGIC_VERS, 4) != 0) &&
         (memcmp(version, DEX_MAGIC_VERS_API_13, 4) != 0) &&
         (memcmp(version, DEX_MAGIC_VERS_37, 4) != 0) &&
-        (memcmp(version, DEX_MAGIC_VERS_38, 4) != 0)) {
+        (memcmp(version, DEX_MAGIC_VERS_38, 4) != 0) &&
+        (memcmp(version, DEX_MAGIC_VERS_39, 4) != 0)) {
         /*
          * Magic was correct, but this is an unsupported older or
          * newer format variant.

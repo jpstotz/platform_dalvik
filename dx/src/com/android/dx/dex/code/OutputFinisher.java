@@ -16,6 +16,7 @@
 
 package com.android.dx.dex.code;
 
+import com.android.dex.DexException;
 import com.android.dx.dex.DexOptions;
 import com.android.dx.io.Opcodes;
 import com.android.dx.rop.code.LocalItem;
@@ -29,8 +30,6 @@ import com.android.dx.rop.cst.CstString;
 import com.android.dx.rop.cst.CstType;
 import com.android.dx.rop.type.Type;
 import com.android.dx.ssa.BasicRegisterMapper;
-
-import com.android.dex.DexException;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashSet;
@@ -221,6 +220,10 @@ public final class OutputFinisher {
 
         if (type != Type.KNOWN_NULL) {
             result.add(CstType.intern(type));
+        } else {
+            /* If this a "known null", let's use "Object" because that's going to be the
+             * resulting type in {@link LocalList.MakeState#filterSpec} */
+            result.add(CstType.intern(Type.OBJECT));
         }
 
         if (name != null) {

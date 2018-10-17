@@ -128,8 +128,7 @@ static const char* primitiveTypeLabel(char typeChar)
 /*
  * Converts a type descriptor to human-readable "dotted" form.  For
  * example, "Ljava/lang/String;" becomes "java.lang.String", and
- * "[I" becomes "int[]".  Also converts '$' to '.', which means this
- * form can't be converted back to a descriptor.
+ * "[I" becomes "int[]".
  */
 static char* descriptorToDot(const char* str)
 {
@@ -166,7 +165,7 @@ static char* descriptorToDot(const char* str)
     int i;
     for (i = 0; i < targetLen; i++) {
         char ch = str[offset + i];
-        newStr[i] = (ch == '/' || ch == '$') ? '.' : ch;
+        newStr[i] = (ch == '/') ? '.' : ch;
     }
 
     /* add the appropriate number of brackets for arrays */
@@ -181,16 +180,14 @@ static char* descriptorToDot(const char* str)
 }
 
 /*
- * Converts the class name portion of a type descriptor to human-readable
- * "dotted" form.
+ * Retrieves the class name portion of a type descriptor.
  *
  * Returns a newly-allocated string.
  */
-static char* descriptorClassToDot(const char* str)
+static char* descriptorClassToName(const char* str)
 {
     const char* lastSlash;
     char* newStr;
-    char* cp;
 
     /* reduce to just the class name, trimming trailing ';' */
     lastSlash = strrchr(str, '/');
@@ -201,10 +198,6 @@ static char* descriptorClassToDot(const char* str)
 
     newStr = strdup(lastSlash);
     newStr[strlen(lastSlash)-1] = '\0';
-    for (cp = newStr; *cp != '\0'; cp++) {
-        if (*cp == '$')
-            *cp = '.';
-    }
 
     return newStr;
 }
@@ -738,7 +731,8 @@ bool getProtoInfo(DexFile* pDexFile, u4 protoIdx, ProtoInfo* pProtoInfo)
             return false;
         }
         const char* param = dexStringByTypeIdx(pDexFile, paramTypes->list[i].typeIdx);
-        size_t newUsed = bufUsed + strlen(param);
+        size_t paramLen = strlen(param);
+        size_t newUsed = bufUsed + paramLen;
         if (newUsed > bufSize) {
             char* newBuf = (char*)realloc(buf, newUsed);
             if (newBuf == NULL) {
@@ -748,7 +742,7 @@ bool getProtoInfo(DexFile* pDexFile, u4 protoIdx, ProtoInfo* pProtoInfo)
             buf = newBuf;
             bufSize = newUsed;
         }
-        strncat(buf + bufUsed - 1, param, bufSize - (bufUsed - 1));
+        memcpy(buf + bufUsed - 1, param, paramLen + 1);
         bufUsed = newUsed;
     }
 
@@ -915,8 +909,26 @@ static char* indexString(DexFile* pDexFile, const DecodedInstruction* pDecInsn, 
             free(protoInfo.parameterTypes);
         }
         break;
-    case kCallSiteRef:
+    case kIndexCallSiteRef:
         outSize = snprintf(buf, bufSize, "call_site@%0*x", width, index);
+        break;
+    case kIndexMethodHandleRef:
+        outSize = snprintf(buf, bufSize, "methodhandle@%0*x", width, index);
+        break;
+    case kIndexProtoRef:
+        {
+            ProtoInfo protoInfo;
+            if (getProtoInfo(pDexFile, index, &protoInfo)) {
+                outSize = snprintf(buf, bufSize, "(%s)%s // proto@%0*x",
+                                   protoInfo.parameterTypes, protoInfo.returnType,
+                                   width, index);
+
+            } else {
+                outSize = snprintf(buf, bufSize, "<proto?> // proto@%0*x",
+                                   width, secondaryIndex);
+            }
+            free(protoInfo.parameterTypes);
+        }
         break;
     default:
         outSize = snprintf(buf, bufSize, "<?>");
@@ -1306,7 +1318,7 @@ void dumpMethod(DexFile* pDexFile, const DexMethod* pDexMethod, int i)
         if (constructor) {
             char* tmp;
 
-            tmp = descriptorClassToDot(backDescriptor);
+            tmp = descriptorClassToName(backDescriptor);
             printf("<constructor name=\"%s\"\n", tmp);
             free(tmp);
 
@@ -1571,7 +1583,7 @@ void dumpClass(DexFile* pDexFile, int idx, char** pLastPackage)
     } else {
         char* tmp;
 
-        tmp = descriptorClassToDot(classDescriptor);
+        tmp = descriptorClassToName(classDescriptor);
         printf("<class name=\"%s\"\n", tmp);
         free(tmp);
 
@@ -1641,15 +1653,6 @@ void dumpClass(DexFile* pDexFile, int idx, char** pLastPackage)
 bail:
     free(pClassData);
     free(accessStr);
-}
-
-
-/*
- * Advance "ptr" to ensure 32-bit alignment.
- */
-static inline const u1* align32(const u1* ptr)
-{
-    return (u1*) (((uintptr_t) ptr + 3) & ~0x03);
 }
 
 
@@ -1865,55 +1868,88 @@ static void dumpMethodHandles(DexFile* pDexFile)
             (const DexMethodHandleItem*)(pDexFile->baseAddr + item->offset);
     for (u4 i = 0; i < item->size; ++i) {
         const DexMethodHandleItem& mh = method_handles[i];
-        bool is_invoke = false;
         const char* type;
-        switch (mh.methodHandleType) {
-            case 0:
+        bool is_invoke;
+        bool is_static;
+        switch ((MethodHandleType) mh.methodHandleType) {
+            case MethodHandleType::STATIC_PUT:
                 type = "put-static";
+                is_invoke = false;
+                is_static = true;
                 break;
-            case 1:
+            case MethodHandleType::STATIC_GET:
                 type = "get-static";
+                is_invoke = false;
+                is_static = true;
                 break;
-            case 2:
+            case MethodHandleType::INSTANCE_PUT:
                 type = "put-instance";
+                is_invoke = false;
+                is_static = false;
                 break;
-            case 3:
+            case MethodHandleType::INSTANCE_GET:
                 type = "get-instance";
+                is_invoke = false;
+                is_static = false;
                 break;
-            case 4:
+            case MethodHandleType::INVOKE_STATIC:
                 type = "invoke-static";
                 is_invoke = true;
+                is_static = true;
                 break;
-            case 5:
+            case MethodHandleType::INVOKE_INSTANCE:
                 type = "invoke-instance";
                 is_invoke = true;
+                is_static = false;
                 break;
-            case 6:
+            case MethodHandleType::INVOKE_CONSTRUCTOR:
                 type = "invoke-constructor";
                 is_invoke = true;
+                is_static = false;
                 break;
+            case MethodHandleType::INVOKE_DIRECT:
+                type = "invoke-direct";
+                is_invoke = true;
+                is_static = false;
+                break;
+            case  MethodHandleType::INVOKE_INTERFACE:
+                type = "invoke-interface";
+                is_invoke = true;
+                is_static = false;
+                break;
+            default:
+                printf("Unknown method handle type 0x%02x, skipped.", mh.methodHandleType);
+                continue;
         }
 
         FieldMethodInfo info;
-        memset(&info, 0, sizeof(info));
         if (is_invoke) {
-            getMethodInfo(pDexFile, mh.fieldOrMethodIdx, &info);
+            if (!getMethodInfo(pDexFile, mh.fieldOrMethodIdx, &info)) {
+                printf("Unknown method handle target method@%04x, skipped.", mh.fieldOrMethodIdx);
+                continue;
+            }
         } else {
-            getFieldInfo(pDexFile, mh.fieldOrMethodIdx, &info);
+            if (!getFieldInfo(pDexFile, mh.fieldOrMethodIdx, &info)) {
+                printf("Unknown method handle target field@%04x, skipped.", mh.fieldOrMethodIdx);
+                continue;
+            }
         }
+
+        const char* instance = is_static ? "" : info.classDescriptor;
 
         if (gOptions.outputFormat == OUTPUT_XML) {
             printf("<method_handle index index=\"%u\"\n", i);
             printf(" type=\"%s\"\n", type);
             printf(" target_class=\"%s\"\n", info.classDescriptor);
             printf(" target_member=\"%s\"\n", info.name);
-            printf(" target_member_type=\"%s\"\n", info.signature);
+            printf(" target_member_type=\"%c%s%s\"\n",
+                   info.signature[0], instance, info.signature + 1);
             printf("</method_handle>\n");
         } else {
             printf("Method Handle #%u:\n", i);
             printf("  type        : %s\n", type);
             printf("  target      : %s %s\n", info.classDescriptor, info.name);
-            printf("  target_type : %s\n", info.signature);
+            printf("  target_type : %c%s%s\n", info.signature[0], instance, info.signature + 1);
         }
     }
 }
@@ -1945,7 +1981,6 @@ static u8 readUnsignedLittleEndian(const u1** pData, u4 size, bool fillOnRight =
         result = (result >> 8) | (((u8)*data++) << 56);
     }
 
-    u8 oldResult = result;
     if (!fillOnRight) {
         result >>= (8u - size) * 8;
     }
@@ -1961,7 +1996,8 @@ static void dumpCallSites(DexFile* pDexFile)
     const DexCallSiteId* ids = (const DexCallSiteId*)(pDexFile->baseAddr + item->offset);
     for (u4 index = 0; index < item->size; ++index) {
         bool doXml = (gOptions.outputFormat == OUTPUT_XML);
-        printf(doXml ? "<call_site index=\"%u\">\n" : "Call Site #%u\n", index);
+        printf(doXml ? "<call_site index=\"%u\" offset=\"%u\">\n" : "Call Site #%u // offset %u\n",
+               index, ids[index].callSiteOff);
         const u1* data = pDexFile->baseAddr + ids[index].callSiteOff;
         u4 count = readUnsignedLeb128(&data);
         for (u4 i = 0; i < count; ++i) {

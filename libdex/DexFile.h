@@ -33,15 +33,21 @@
 #ifndef LIBDEX_DEXFILE_H_
 #define LIBDEX_DEXFILE_H_
 
+/*
+ * Annotation to tell clang that we intend to fall through from one case to
+ * another in a switch. Sourced from android-base/macros.h.
+ */
+#define FALLTHROUGH_INTENDED [[clang::fallthrough]]
+
 #ifndef LOG_TAG
 # define LOG_TAG "libdex"
 #endif
+#include <log/log.h>
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <assert.h>
-#include "cutils/log.h"
 
 /*
  * If "very verbose" logging is enabled, make it equivalent to ALOGV.
@@ -96,6 +102,11 @@ typedef int64_t             s8;
  * contain invoke-custom, invoke-polymorphic, call-sites, and method handles.
  */
 #define DEX_MAGIC_VERS_38  "038\0"
+
+/* The version for android P, encoded in 4 bytes of ASCII. This differentiates dex files that may
+ * contain const-method-handle and const-proto.
+ */
+#define DEX_MAGIC_VERS_39  "039\0"
 
 /* current version, encoded in 4 bytes of ASCII */
 #define DEX_MAGIC_VERS  "036\0"
@@ -368,6 +379,21 @@ struct DexClassDef {
  */
 struct DexCallSiteId {
     u4  callSiteOff;        /* file offset to DexEncodedArray */
+};
+
+/*
+ * Enumeration of method handle type codes.
+ */
+enum MethodHandleType {
+    STATIC_PUT = 0x00,
+    STATIC_GET = 0x01,
+    INSTANCE_PUT = 0x02,
+    INSTANCE_GET = 0x03,
+    INVOKE_STATIC = 0x04,
+    INVOKE_INSTANCE = 0x05,
+    INVOKE_CONSTRUCTOR = 0x06,
+    INVOKE_DIRECT = 0x07,
+    INVOKE_INTERFACE = 0x08
 };
 
 /*

@@ -33,9 +33,20 @@ cd "${progdir}"
 progdir=`pwd`
 prog="${progdir}"/`basename "${prog}"`
 
-export JAVAC="${progdir}/../../../prebuilt/common/openjdk/bin/javac"
+if [[ -z "${JAVA_HOME}" ]]; then
+    unix=$(uname | tr '[A-Z]' '[a-z]')
+    JAVA_HOME="${progdir}/../../../prebuilts/jdk/jdk8/${unix}-x86"
+fi
+
+if [[ ! -d "${JAVA_HOME}" ]]; then
+    echo "Missing JAVA_HOME directory: $JAVA_HOME" 1>&2
+    exit 1
+fi
+
+export JAVAC="${JAVA_HOME}/bin/javac"
 if [ "!" -e "$JAVAC" ]; then
-    JAVAC="javac"
+    echo "Missing JAVAC executable: ${JAVAC}" 1>&2
+    exit 1
 fi
 
 info="info.txt"
@@ -43,6 +54,7 @@ run="run"
 expected="expected.txt"
 output="out.txt"
 
+clean_on_exit="yes"
 dev_mode="no"
 update_mode="no"
 tmpdir=/tmp/test-$$
@@ -50,7 +62,8 @@ usage="no"
 
 while [[ "x$1" = "x-"* ]]; do
     case $1 in
-         --dev) dev_mode="yes" ;;
+        --dev) dev_mode="yes" ;;
+        --no-clean) clean_on_exit="no" ;;
          --output_dir)
              tmpdir=$2
              shift ;;
@@ -96,14 +109,16 @@ if [ "$usage" = "yes" ]; then
     exit 1
 fi
 
-td_info="$testdir"/"$info"
-td_run="$testdir"/"$run"
-td_expected="$testdir"/"$expected"
+td_info="${testdir}/${info}"
+td_run="${testdir}/${run}"
+td_expected="${testdir}/${expected}"
 
-if [ '!' '(' -r "$td_info" -a -r "$td_run" -a -r "$td_expected" ')' ]; then
-    echo "${testdir}: missing files" 1>&2
-    exit 1
-fi
+for td_file in "$td_info" "$td_run" "$td_expected"; do
+    if [[ ! -r "$td_file" ]]; then
+        echo "${testdir}: missing file $td_file" 1>&2
+        exit 1
+    fi
+done
 
 # copy the test to a temp dir and run it
 if [ -d "$tmpdir" ]; then
@@ -122,8 +137,15 @@ if [ "$dev_mode" = "yes" ]; then
     echo "exit status: $?" 1>&2
     good="yes"
 elif [ "$update_mode" = "yes" ]; then
-    "./$run" >"${progdir}/$td_expected" 2>&1
-    good="yes"
+    "./$run" >"$output" 2>&1
+    if [[ $? == 0 ]]; then
+        good="yes"
+        mv "$output" "${progdir}/${td_expected}"
+    else
+        echo "Test failed during update."
+        good="no"
+    fi
+
 else
     "./$run" >"$output" 2>&1
     cmp -s "$expected" "$output"
@@ -136,7 +158,11 @@ fi
 
 if [ "$good" = "yes" ]; then
     cd "$oldwd"
-    rm -rf "$tmpdir"
+    if [ "$clean_on_exit" = "yes" ]; then
+        rm -rf "$tmpdir"
+    else
+        echo "Test artifacts left in $tmpdir"
+    fi
     exit 0
 fi
 

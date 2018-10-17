@@ -18,10 +18,10 @@ package com.android.dex;
 
 import com.android.dex.Code.CatchHandler;
 import com.android.dex.Code.Try;
+import com.android.dex.MethodHandle.MethodHandleType;
 import com.android.dex.util.ByteInput;
 import com.android.dex.util.ByteOutput;
 import com.android.dex.util.FileUtils;
-
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -352,6 +352,7 @@ public final class Dex {
             return readShort() & 0xffff;
         }
 
+        @Override
         public byte readByte() {
             return data.get();
         }
@@ -437,6 +438,19 @@ public final class Dex {
             int returnTypeIndex = readInt();
             int parametersOffset = readInt();
             return new ProtoId(Dex.this, shortyIndex, returnTypeIndex, parametersOffset);
+        }
+
+        public CallSiteId readCallSiteId() {
+            int offset = readInt();
+            return new CallSiteId(Dex.this, offset);
+        }
+
+        public MethodHandle readMethodHandle() {
+            MethodHandleType methodHandleType = MethodHandleType.fromValue(readUnsignedShort());
+            int unused1 = readUnsignedShort();
+            int fieldOrMethodId = readUnsignedShort();
+            int unused2 = readUnsignedShort();
+            return new MethodHandle(Dex.this, methodHandleType, unused1, fieldOrMethodId, unused2);
         }
 
         public ClassDef readClassDef() {
@@ -625,6 +639,7 @@ public final class Dex {
             this.data.put(bytes);
         }
 
+        @Override
         public void writeByte(int b) {
             data.put((byte) b);
         }
@@ -696,65 +711,77 @@ public final class Dex {
     }
 
     private final class StringTable extends AbstractList<String> implements RandomAccess {
-        @Override public String get(int index) {
+        @Override
+        public String get(int index) {
             checkBounds(index, tableOfContents.stringIds.size);
             return open(tableOfContents.stringIds.off + (index * SizeOf.STRING_ID_ITEM))
                     .readString();
         }
-        @Override public int size() {
+        @Override
+        public int size() {
             return tableOfContents.stringIds.size;
         }
     }
 
     private final class TypeIndexToDescriptorIndexTable extends AbstractList<Integer>
             implements RandomAccess {
-        @Override public Integer get(int index) {
+        @Override
+        public Integer get(int index) {
             return descriptorIndexFromTypeIndex(index);
         }
-        @Override public int size() {
+        @Override
+        public int size() {
             return tableOfContents.typeIds.size;
         }
     }
 
     private final class TypeIndexToDescriptorTable extends AbstractList<String>
             implements RandomAccess {
-        @Override public String get(int index) {
+        @Override
+        public String get(int index) {
             return strings.get(descriptorIndexFromTypeIndex(index));
         }
-        @Override public int size() {
+        @Override
+        public int size() {
             return tableOfContents.typeIds.size;
         }
     }
 
     private final class ProtoIdTable extends AbstractList<ProtoId> implements RandomAccess {
-        @Override public ProtoId get(int index) {
+        @Override
+        public ProtoId get(int index) {
             checkBounds(index, tableOfContents.protoIds.size);
             return open(tableOfContents.protoIds.off + (SizeOf.PROTO_ID_ITEM * index))
                     .readProtoId();
         }
-        @Override public int size() {
+        @Override
+        public int size() {
             return tableOfContents.protoIds.size;
         }
     }
 
     private final class FieldIdTable extends AbstractList<FieldId> implements RandomAccess {
-        @Override public FieldId get(int index) {
+        @Override
+        public FieldId get(int index) {
             checkBounds(index, tableOfContents.fieldIds.size);
             return open(tableOfContents.fieldIds.off + (SizeOf.MEMBER_ID_ITEM * index))
                     .readFieldId();
         }
-        @Override public int size() {
+        @Override
+        public int size() {
             return tableOfContents.fieldIds.size;
         }
     }
 
     private final class MethodIdTable extends AbstractList<MethodId> implements RandomAccess {
-        @Override public MethodId get(int index) {
+        @Override
+        public MethodId get(int index) {
             checkBounds(index, tableOfContents.methodIds.size);
             return open(tableOfContents.methodIds.off + (SizeOf.MEMBER_ID_ITEM * index))
                     .readMethodId();
         }
-        @Override public int size() {
+        @Override
+        public int size() {
             return tableOfContents.methodIds.size;
         }
     }
@@ -782,6 +809,7 @@ public final class Dex {
     }
 
     private final class ClassDefIterable implements Iterable<ClassDef> {
+        @Override
         public Iterator<ClassDef> iterator() {
             return !tableOfContents.classDefs.exists()
                ? Collections.<ClassDef>emptySet().iterator()
